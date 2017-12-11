@@ -1,0 +1,6 @@
+编译 ： make
+清除 ： make clean
+清除 ： make clean
+加载 :  sudo insmod car.ko
+查看 :  sudo dmesg -c
+卸载 :  sudo rmmod  car
