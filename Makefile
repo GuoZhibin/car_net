@@ -1,6 +1,6 @@
 ifneq ($(KERNELRELEASE),)
 	obj-m := car.o
-	car-objs = main.o  source.o
+	car-objs := main.o  source.o
 else
 	PWD := $(shell pwd)
 	KDIR := /lib/modules/$(shell uname -r)/build
