@@ -28,6 +28,11 @@
 						
 #include "mmDebug.h"
 
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
+
+
+
 #define UDP_CLI_PORT 4047
 #define UDP_SERV_PORT 7003
 #define UDP_CLI_TEST_PORT 4045
@@ -67,7 +72,11 @@
 #define TRANS_BANDWIDTH_REQ = 0x14		//传输带宽请求
 #define TRANS_BANDWIDTH_RES  0x24 		//传输带宽响应
 
-
+extern struct dentry * my_debugfs_root;
+extern struct dentry * my_debugfs;
+extern struct debugfs_blob_wrapper arraydata;
+//extern struct dentry * my_debugfs_file = NULL;
+//extern static const struct file_operations car_net_fops;
 
 //移动应急车状态
 enum vehicle_status
@@ -118,7 +127,8 @@ struct data_hdr
 		res1:1,//保留
 		vehicle_id:8; //移动应急车ID
 	u16 frag_sn:8,//分片序号
-		res2:8;//保留
+		re_frag_num:4,//再分割包数
+		re_frag_sn:4;//再分割序号
 	u32 pkt_sn:12,//数据包序号
 		len:12,//数据包长度，不包括包头struct data_hdr
 		res3:8; //保留
@@ -201,12 +211,17 @@ unsigned int preRoutHookDisp(void *priv, struct sk_buff *skb,
 unsigned int TEST_PORT_FUNC(struct sk_buff *skb);
 void IP_int_to_str(uint32_t ip, unsigned int * addr);
 
-void Show_SkBuff_Data(struct sk_buff * skb);
+void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool DAT);
+
 
 unsigned int vehicle_hook_term_process(struct sk_buff *skb);
 int vehicle_udp_decap(struct sk_buff *skb);	// Decapsulate IP&UDP head.
-bool vehicle_llc_decap(struct sk_buff *skb);
+struct sk_buff * vehicle_llc_decap(struct sk_buff *skb);
 unsigned int process_term_ctl(struct sk_buff *skb);
+
+struct sk_buff * create_new_skb(unsigned int len);
+
+ssize_t WriteToFile(const char * FileName, unsigned char * DataToWrite, unsigned int DataLen);
 
 
 
