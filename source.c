@@ -1,18 +1,30 @@
 
 #include "source.h"
 
-unsigned int preRoutHookDisp(void *priv, struct sk_buff *skb,
-				 const struct nf_hook_state *state)
+
+#if defined LINUX_4_10
+unsigned int preRoutHookDisp(		void *priv, 
+									struct sk_buff *skb, 
+									const struct nf_hook_state *state)
+#elif defined LINUX_3_13
+unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
+							       	struct sk_buff *skb,
+							       	const struct net_device *in,
+							       	const struct net_device *out,
+							       	int (*okfn)(struct sk_buff *))
+#endif
 {
 	struct iphdr * iphd = (struct iphdr *)(skb->head + skb->network_header);
 	struct udphdr *udph = (struct udphdr *)(skb->head + skb->transport_header);
+//	struct tcphdr *tcph = (struct tcphdr *)(skb->head + skb->transport_header);
 
 	if(iphd->protocol == IPPROTO_UDP)	// Judge package type
 	{
 		switch(ntohs(udph->dest))	// Judge destination port
 		{
 		case 8087:	// TODO: Need to be modified.			
-			return vehicle_hook_term_process(skb);
+			vehicle_hook_term_process(skb);
+			return NF_STOLEN;
 			break;
 	/*		
 		case TERM_C2_VEHICLE_PORT:	// Terminal to car, command
@@ -24,58 +36,71 @@ unsigned int preRoutHookDisp(void *priv, struct sk_buff *skb,
 			break;
 	*/		
 		default:	
-			return NF_ACCEPT;
 			break;
 		}
 
 	}
-	else
-		return NF_ACCEPT;
+//	else if(iphd->protocol == IPPROTO_TCP)
+//	{
+//		if(ntohs(tcph->dest) == 7006)
+//			Show_SkBuff_Data(skb, false, true, false, false);
+//	}
+	
+	return NF_ACCEPT;
 }
 
-unsigned int vehicle_hook_term_process(struct sk_buff *skb)	// Deal packages from terminal
+void vehicle_hook_term_process(struct sk_buff *skb)	// Deal packages from terminal
 {
 	struct sk_buff *skb_t = NULL;
-	printk("----------------Receive-----------------");
-	Show_SkBuff_Data(skb, true, true, true, false);
+	
+//	printk("----------------Receive-----------------");
+//	Show_SkBuff_Data(skb, true, true, true, false);
 	
 	if(vehicle_udp_decap(skb))	// LLC Ctrl
 	{
-		printk("***************Ctrl Frame***************\n");
+//		printk("***************Ctrl Frame***************\n");
 		process_term_ctl(skb);
 	}
 	else	// LLC Data
 	{
-		if(skb_t) kfree_skb(skb_t);
-		skb_t = vehicle_llc_decap(skb);
-		printk("***************Data Frame***************\n");	
+//		if(skb_t) 
+//		{
+//			printk("Old skb dropped.\n");
+//			kfree_skb(skb_t);
+//		}
+
+//		printk("***************Data Frame***************\n");
+
+//		IAmHere = 1;
+
+		skb_t = vehicle_llc_decap(skb);	
+
 		if(skb_t) 
 		{
-			
-//			if(WriteToFile("/home/juice/log/car_net/debug.txt", skb_t->data, skb_t->len) == 0)
-//				printk("Write to file failed.\n");
+//			arraydata.data = (char *)skb_t->data;
+//			arraydata.size = skb_t->len;
+//			if(my_debugfs)
+//				debugfs_remove(my_debugfs);
+//			my_debugfs = debugfs_create_blob("car_net.txt", 0666, my_debugfs_root, &arraydata);
+//			if (!my_debugfs)
+//				printk("Debugfs create failed.\n");
+//			
+//			printk("***************Package***************\n");
+//			Show_SkBuff_Data(skb_t, false, true, false, false);
 
-			arraydata.data = (char *)skb_t->data;
-			arraydata.size = skb_t->len;
-			if(my_debugfs)
-				debugfs_remove(my_debugfs);
-			my_debugfs = debugfs_create_blob("car_net.txt", 0666, my_debugfs_root, &arraydata);
-			if (!my_debugfs)
-				printk("Debugfs create failed.\n");
+//			IAmHere = 7; 
+
+			netif_receive_skb(skb_t);
+
+//			IAmHere = 8; 
 			
-			Show_SkBuff_Data(skb_t, false, true, true, true);
+//			kfree_skb(skb_t);
+//			skb_t = NULL;
 
 		}
-//		netif_receive_skb(skb_t);
+		
 	}
 	
-//	if(skb_t) 	
-//	{
-//		kfree_skb(skb_t);
-//		skb_t = NULL;
-//	}
-
-	return NF_STOLEN;
 }
 
 int vehicle_udp_decap(struct sk_buff *skb)	// Decapsulate IP&UDP head.
@@ -109,80 +134,117 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 	static struct sk_buff * skb_t = NULL;
 	struct sk_buff * skb_return = NULL;
 	static int pktlastsn = -1;
+	static int fragsn = 0;
 	unsigned int datalen = 0;
 	char * ptr = NULL;
 
 	const unsigned int headlen = sizeof(struct ethhdr) + sizeof(struct iphdr) + \
 							sizeof(struct udphdr) + sizeof(struct data_hdr) + 16;
-	
-	if((pktlastsn < 0) || (datah->pkt_sn == pktlastsn + 1) || (pktlastsn == 4095 && datah->pkt_sn == 0))
+
+/**********************************************************************************/
+//	skb_pull(skb, sizeof(struct data_hdr));
+//
+//	skb->ip_summed = CHECKSUM_UNNECESSARY;
+//
+//	skb_return = skb;
+/**********************************************************************************/	
+
+	if((pktlastsn < 0) || (datah->pkt_sn == pktlastsn + 1) || 
+		(pktlastsn == 4095 && datah->pkt_sn == 1) || (datah->pkt_sn == 0))
 	{
 		pktlastsn = datah->pkt_sn;
 
 		switch(datah->frag_flag)
 		{
 			case 3:	// 11 : No frag
-				printk("No frag pkg get\n");
+
+//				IAmHere = 2;
+
 				skb_pull(skb, sizeof(struct data_hdr));
+
+				skb->ip_summed = CHECKSUM_UNNECESSARY;
+
 				skb_return = skb;
 			break;
 			case 2:	// 10 : First frag
-			
-				printk("First frag pkg get\n");
-				
+
+//				IAmHere = 3;
+				if(unlikely(datah->frag_sn != 1))
+				{
+					printk(KERN_ERR"(First frag)ERROR : fragsn %d.", datah->frag_sn);
+					break;
+				}
+				fragsn = datah->frag_sn;
+#ifdef SAFE				
 				if(unlikely(skb_t != NULL)) 
 				{
-					printk("ERROR : Recovery new pkg when old recoverying work unfinished.\n");
-					break;
+					printk(KERN_ERR"(First frag)ERROR : (sn%d)Recovery new pkg when old recoverying work unfinished.\n", 
+																								datah->pkt_sn);
+					kfree_skb(skb_t);
+					skb_t = NULL;
 				}
-
-				skb_t = create_new_skb(datah->len + headlen);	// TODO: 'headlen' can be deleted?
-				
-				datalen = skb->len - sizeof(struct data_hdr);
-				if(unlikely(datalen < 0)) 
+#endif
+				skb_pull(skb, sizeof(struct data_hdr));
+				skb_t = skb_copy_expand(skb, datah->len + headlen, 0, GFP_KERNEL);
+#ifdef SAFE
+				if(unlikely(skb_t == NULL))
 				{
-					printk("ERROR : Datalen < 0.\n");
+					printk(KERN_ERR"(First frag)ERROR : skb_t created failed.\n");
 					break;
 				}
-				printk("First frag len : %d\n", datalen);
-				
-				ptr = skb_push(skb_t, datalen);
-				memcpy(ptr, skb->data + sizeof(struct data_hdr), datalen);
+#endif
 
-				printk("skb_len : %d\n", skb_t->len);
-				
+//				printk("datalen : %d\n", datah->len);
+//				printk("(First)skb_t headroom : %d\n", skb_headroom(skb_t));
+
 				kfree_skb(skb);
 				skb = NULL;
 				
 				break;
 			case 1:	// 01 : Last frag
 			
-				printk("Last frag pkg get\n");
-				
+//				IAmHere = 4; 
+
+				if(unlikely(datah->frag_sn != fragsn + 1))
+				{
+					printk(KERN_ERR"(Last frag)ERROR : fragsn %d, Last fragsn %d\n",
+																		datah->frag_sn, fragsn);
+					break;
+				}
+				fragsn = datah->frag_sn;
+								
+#ifdef SAFE				
 				if(unlikely(skb_t == NULL)) 
 				{
-					printk("ERROR : No skb was created for last frag.\n");
+					printk(KERN_ERR"(Last frag)ERROR : Lacking in skb.\n");
 					break;
 				}
-				
+#endif				
 				datalen = skb->len - sizeof(struct data_hdr);
+#ifdef SAFE		
 				if(unlikely(datalen < 0)) 
 				{
-					printk("ERROR : Datalen < 0.\n");
+					printk(KERN_ERR"(Last frag)ERROR : Datalen < 0.\n");
 					break;
 				}
-				printk("Last frag len : %d\n", datalen);
-				
+				if(unlikely(datalen > skb_headroom(skb_t))) 
+				{
+					printk(KERN_ERR"(Last frag)ERROR : (sn%d Last Frag)Datalen %d, headroom %d. alen %d.\n", 
+													datah->pkt_sn, datalen, skb_headroom(skb_t), datah->len);
+					break;
+				}
+#endif				
 				ptr = skb_push(skb_t, datalen);
 				memcpy(ptr, skb->data + sizeof(struct data_hdr), datalen);
 
-				printk("skb_len : %d\n", skb_t->len);
+//				printk("skb_len : %d\n", skb_t->len);
 				
 				skb_t->network_header = skb_t->data - skb_t->head;
 				skb_t->transport_header = skb_t->network_header + sizeof(struct iphdr);
-				skb_t->ip_summed = CHECKSUM_NONE;
-				skb_t->protocol = htons(ETH_P_IP);
-	
+				skb_t->pkt_type = PACKET_HOST;				
+				skb_t->ip_summed = CHECKSUM_UNNECESSARY;
+				skb_t->dev = skb->dev;
+								
 				skb_return = skb_t;
 				skb_t = NULL;
 
@@ -192,26 +254,42 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 				break;
 			case 0:	// 00 : Middle frag
 			
-				printk("Middle frag pkg get\n");
-				
+//				IAmHere = 5; 
+
+				if(unlikely(datah->frag_sn != fragsn + 1))
+				{
+					printk(KERN_ERR"(Middle frag)ERROR : fragsn %d, Last fragsn %d\n",
+																		datah->frag_sn, fragsn);
+					break;
+				}
+				fragsn = datah->frag_sn;
+
+#ifdef SAFE
 				if(unlikely(skb_t == NULL)) 
 				{
-					printk("ERROR : No skb was created for middle frag.\n");
+					printk(KERN_ERR"(Middle frag)ERROR : Lacking in skb.\n");
 					break;
 				}
-				
+#endif
+
 				datalen = skb->len - sizeof(struct data_hdr);
+#ifdef SAFE
 				if(unlikely(datalen < 0)) 
 				{
-					printk("ERROR : Datalen < 0.\n");
+					printk(KERN_ERR"(Middle frag)ERROR : Datalen < 0.\n");
 					break;
 				}
-				printk("Middle frag len : %d\n", datalen);
-				
+				if(unlikely(datalen > skb_headroom(skb_t))) 
+				{
+					printk(KERN_ERR"(Middle frag)ERROR : (sn %d)Datalen %d, headroom %d, alen %d.\n",
+												datah->pkt_sn, datalen, skb_headroom(skb_t), datah->len);
+					break;
+				}
+#endif
 				ptr = skb_push(skb_t, datalen);
 				memcpy(ptr, skb->data + sizeof(struct data_hdr), datalen);
 
-				printk("skb_len : %d\n", skb_t->len);
+//				printk("skb_len : %d\n", skb_t->len);
 				
 				kfree_skb(skb);
 				skb = NULL;
@@ -222,13 +300,15 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 	}
 	else
 	{
-		printk("ERROR : sn error, pkg aborted.\n");
+//		IAmHere = 6; 
+		
+		printk(KERN_ERR"ERROR : sn error, Last sn:%d, this sn:%d\n", pktlastsn, datah->pkt_sn);
 		kfree_skb(skb);
 		skb = NULL;
 	}
 	
 	return skb_return;
-//	netif_receive_skb();
+	
 }
 
 
@@ -236,6 +316,7 @@ unsigned int process_term_ctl(struct sk_buff *skb)	// Contorl Frame
 {
 // Skb will be empty after pulling.!!
 //	skb_pull(skb, sizeof(struct ctr_hdr));
+	kfree(skb);
 	return 0;
 }
 
@@ -259,12 +340,13 @@ void IP_int_to_str(uint32_t ip, unsigned int * addr)
 struct sk_buff * create_new_skb(unsigned int len)
 {
 	struct sk_buff *skb = alloc_skb(len, GFP_KERNEL);
+#ifdef SAFE	
 	if(unlikely(!skb)) 
 	{
 		printk("alloc failed\n"); 
 		return NULL;
 	} 
-	
+#endif
 	skb_reserve(skb, len);
 	skb->pkt_type  = PACKET_OTHERHOST;
 	return skb;

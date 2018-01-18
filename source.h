@@ -72,11 +72,19 @@
 #define TRANS_BANDWIDTH_REQ = 0x14		//传输带宽请求
 #define TRANS_BANDWIDTH_RES  0x24 		//传输带宽响应
 
-extern struct dentry * my_debugfs_root;
-extern struct dentry * my_debugfs;
-extern struct debugfs_blob_wrapper arraydata;
+#define SAFE 1
+//#define LINUX_4_10					1
+#define LINUX_3_13					1
+
+
+//extern struct dentry * my_debugfs_root;
+//extern struct dentry * my_debugfs;
+//extern struct debugfs_blob_wrapper arraydata;
 //extern struct dentry * my_debugfs_file = NULL;
 //extern static const struct file_operations car_net_fops;
+
+extern u32 IAmHere;
+
 
 //移动应急车状态
 enum vehicle_status
@@ -130,8 +138,8 @@ struct data_hdr
 		re_frag_num:4,//再分割包数
 		re_frag_sn:4;//再分割序号
 	u32 pkt_sn:12,//数据包序号
-		len:12,//数据包长度，不包括包头struct data_hdr
-		res3:8; //保留
+		len:14,//数据包长度，不包括包头struct data_hdr
+		res3:6; //保留
 };
 
 //与本地网卡对应远端网卡信息
@@ -205,16 +213,24 @@ struct vehicle_info
 };
 
 
-unsigned int preRoutHookDisp(void *priv, struct sk_buff *skb,
-				 const struct nf_hook_state *state);
-
+#if defined LINUX_4_10
+unsigned int preRoutHookDisp(		void *priv, 
+									struct sk_buff *skb, 
+									const struct nf_hook_state *state);
+#elif defined LINUX_3_13
+unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
+							       	struct sk_buff *skb,
+							       	const struct net_device *in,
+							       	const struct net_device *out,
+							       	int (*okfn)(struct sk_buff *));
+#endif
 unsigned int TEST_PORT_FUNC(struct sk_buff *skb);
 void IP_int_to_str(uint32_t ip, unsigned int * addr);
 
 void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool DAT);
 
 
-unsigned int vehicle_hook_term_process(struct sk_buff *skb);
+void vehicle_hook_term_process(struct sk_buff *skb);
 int vehicle_udp_decap(struct sk_buff *skb);	// Decapsulate IP&UDP head.
 struct sk_buff * vehicle_llc_decap(struct sk_buff *skb);
 unsigned int process_term_ctl(struct sk_buff *skb);

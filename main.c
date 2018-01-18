@@ -8,7 +8,9 @@ static struct nf_hook_ops preRoutHook;
 
 struct dentry * my_debugfs_root = NULL;
 
-struct debugfs_blob_wrapper arraydata;
+u32 IAmHere = 0;
+
+//struct debugfs_blob_wrapper arraydata;
 struct dentry * my_debugfs = NULL;
 
 //struct dentry * my_debugfs_file = NULL;
@@ -37,8 +39,9 @@ struct dentry * my_debugfs = NULL;
 
 int mmHookInit(void)
 {
-	preRoutHook.hook = preRoutHookDisp;	
-	preRoutHook.hooknum = NF_INET_PRE_ROUTING;
+	preRoutHook.hook = preRoutHookDisp;
+	preRoutHook.hooknum = NF_INET_PRE_ROUTING;	// TODO: Local in?
+//	preRoutHook.hooknum = NF_INET_LOCAL_IN;
 	preRoutHook.pf = NFPROTO_IPV4;
 	preRoutHook.priority = NF_IP_PRI_LAST;
 	nf_register_hook(&preRoutHook);
@@ -57,6 +60,8 @@ static int mm_init(void)
 	my_debugfs_root = debugfs_create_dir("car_net_dir", NULL);
 	if (!my_debugfs_root)
 		printk("Debugfs dir create failed.\n");
+
+	my_debugfs = debugfs_create_u32("IAmHere", 0666, my_debugfs_root, &IAmHere);
 
 //	my_debugfs_file = debugfs_create_file("user_net_file", 0666, my_debugfs_root, NULL, car_net_fops);
 //	if (!my_debugfs_file)
