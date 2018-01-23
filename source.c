@@ -51,10 +51,10 @@ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
 
 void vehicle_hook_term_process(struct sk_buff *skb)	// Deal packages from terminal
 {
-	struct sk_buff *skb_t = NULL;
+	struct sk_buff *skb_decap = NULL;
 	
 //	printk("----------------Receive-----------------");
-//	Show_SkBuff_Data(skb, true, true, true, false);
+//	Show_SkBuff_Data(skb, true, true, true, false, true);
 	
 	if(vehicle_udp_decap(skb))	// LLC Ctrl
 	{
@@ -73,34 +73,19 @@ void vehicle_hook_term_process(struct sk_buff *skb)	// Deal packages from termin
 
 //		IAmHere = 1;
 
-		skb_t = vehicle_llc_decap(skb);	
+		skb_decap = vehicle_llc_decap(skb);	
 
-		if(skb_t) 
-		{
-//			arraydata.data = (char *)skb_t->data;
-//			arraydata.size = skb_t->len;
-//			if(my_debugfs)
-//				debugfs_remove(my_debugfs);
-//			my_debugfs = debugfs_create_blob("car_net.txt", 0666, my_debugfs_root, &arraydata);
-//			if (!my_debugfs)
-//				printk("Debugfs create failed.\n");
-//			
+		if(skb_decap) 
+		{	
 //			printk("***************Package***************\n");
-//			Show_SkBuff_Data(skb_t, false, true, false, false);
+//			Show_SkBuff_Data(skb_decap, false, true, true, true, true);
 
-//			IAmHere = 7; 
-
-			netif_receive_skb(skb_t);
-
-//			IAmHere = 8; 
+			netif_receive_skb(skb_decap);
 			
-//			kfree_skb(skb_t);
-//			skb_t = NULL;
-
+//			kfree_skb(skb_decap);
+//			skb_decap = NULL;
 		}
-		
 	}
-	
 }
 
 int vehicle_udp_decap(struct sk_buff *skb)	// Decapsulate IP&UDP head.
@@ -117,11 +102,8 @@ int vehicle_udp_decap(struct sk_buff *skb)	// Decapsulate IP&UDP head.
 	}
 	else	// LLC Data
 	{
-		skb->network_header = skb->data - skb->head + sizeof(struct data_hdr);
-		skb->transport_header = skb->network_header + sizeof(struct iphdr);
 		return 0;
 	}
-
 }
 
 /*
@@ -131,23 +113,19 @@ int vehicle_udp_decap(struct sk_buff *skb)	// Decapsulate IP&UDP head.
 struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)	
 {
 	struct data_hdr * datah = (struct data_hdr *)skb->data;
-	static struct sk_buff * skb_t = NULL;
+	
+	static struct sk_buff * skb_rec = NULL;
+	static struct sk_buff * skb_last = NULL;
+	struct sk_buff * skb_t = NULL;
 	struct sk_buff * skb_return = NULL;
 	static int pktlastsn = -1;
 	static int fragsn = 0;
-	unsigned int datalen = 0;
-	char * ptr = NULL;
+	struct skb_shared_info * shinfo = NULL;
 
-	const unsigned int headlen = sizeof(struct ethhdr) + sizeof(struct iphdr) + \
-							sizeof(struct udphdr) + sizeof(struct data_hdr) + 16;
-
-/**********************************************************************************/
-//	skb_pull(skb, sizeof(struct data_hdr));
-//
-//	skb->ip_summed = CHECKSUM_UNNECESSARY;
-//
-//	skb_return = skb;
-/**********************************************************************************/	
+	skb_pull(skb, sizeof(struct data_hdr));
+	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	skb->network_header = skb->data - skb->head;
+	skb->transport_header = skb->network_header + sizeof(struct iphdr);
 
 	if((pktlastsn < 0) || (datah->pkt_sn == pktlastsn + 1) || 
 		(pktlastsn == 4095 && datah->pkt_sn == 1) || (datah->pkt_sn == 0))
@@ -156,155 +134,113 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 
 		switch(datah->frag_flag)
 		{
-			case 3:	// 11 : No frag
-
-//				IAmHere = 2;
-
-				skb_pull(skb, sizeof(struct data_hdr));
-
-				skb->ip_summed = CHECKSUM_UNNECESSARY;
-
+			// 11 : No frag
+			case 3:	
 				skb_return = skb;
+				skb_rec = NULL;
+				skb_last = NULL;
 			break;
-			case 2:	// 10 : First frag
 
-//				IAmHere = 3;
+			// 10 : First frag
+			case 2:	
 				if(unlikely(datah->frag_sn != 1))
 				{
-					printk(KERN_ERR"(First frag)ERROR : fragsn %d.", datah->frag_sn);
+					printk(KERN_ERR"(Firs)ERROR : fragsn %d.", datah->frag_sn);
 					break;
 				}
-				fragsn = datah->frag_sn;
 #ifdef SAFE				
-				if(unlikely(skb_t != NULL)) 
+				if(unlikely(skb_rec != NULL)) 
 				{
-					printk(KERN_ERR"(First frag)ERROR : (sn%d)Recovery new pkg when old recoverying work unfinished.\n", 
-																								datah->pkt_sn);
-					kfree_skb(skb_t);
-					skb_t = NULL;
+					printk(KERN_ERR"(First)ERROR : (sn%d)Last skb unfinished.\n", datah->pkt_sn);
+					kfree_skb(skb_rec);
+					skb_rec = NULL;
 				}
 #endif
-				skb_pull(skb, sizeof(struct data_hdr));
-				skb_t = skb_copy_expand(skb, datah->len + headlen, 0, GFP_KERNEL);
-#ifdef SAFE
-				if(unlikely(skb_t == NULL))
-				{
-					printk(KERN_ERR"(First frag)ERROR : skb_t created failed.\n");
-					break;
-				}
-#endif
-
-//				printk("datalen : %d\n", datah->len);
-//				printk("(First)skb_t headroom : %d\n", skb_headroom(skb_t));
-
-				kfree_skb(skb);
-				skb = NULL;
-				
+				skb_rec = skb;
+				skb_last = skb;
+				fragsn = datah->frag_sn;
+				skb_return = NULL;
 				break;
-			case 1:	// 01 : Last frag
-			
-//				IAmHere = 4; 
 
+			// 01 : Last frag
+			case 1:	
 				if(unlikely(datah->frag_sn != fragsn + 1))
 				{
-					printk(KERN_ERR"(Last frag)ERROR : fragsn %d, Last fragsn %d\n",
-																		datah->frag_sn, fragsn);
+ 					printk(KERN_ERR"(Last)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
 					break;
-				}
-				fragsn = datah->frag_sn;
-								
+				}								
 #ifdef SAFE				
-				if(unlikely(skb_t == NULL)) 
+				if(unlikely(skb_rec == NULL)) 
 				{
-					printk(KERN_ERR"(Last frag)ERROR : Lacking in skb.\n");
+					printk(KERN_ERR"(Last)ERROR : Lacking in skb.\n");
 					break;
 				}
 #endif				
-				datalen = skb->len - sizeof(struct data_hdr);
-#ifdef SAFE		
-				if(unlikely(datalen < 0)) 
-				{
-					printk(KERN_ERR"(Last frag)ERROR : Datalen < 0.\n");
-					break;
-				}
-				if(unlikely(datalen > skb_headroom(skb_t))) 
-				{
-					printk(KERN_ERR"(Last frag)ERROR : (sn%d Last Frag)Datalen %d, headroom %d. alen %d.\n", 
-													datah->pkt_sn, datalen, skb_headroom(skb_t), datah->len);
-					break;
-				}
-#endif				
-				ptr = skb_push(skb_t, datalen);
-				memcpy(ptr, skb->data + sizeof(struct data_hdr), datalen);
+				// Add frag_list
+				shinfo = skb_shinfo(skb_last);
+				shinfo->frag_list = skb;
 
-//				printk("skb_len : %d\n", skb_t->len);
-				
-				skb_t->network_header = skb_t->data - skb_t->head;
-				skb_t->transport_header = skb_t->network_header + sizeof(struct iphdr);
-				skb_t->pkt_type = PACKET_HOST;				
-				skb_t->ip_summed = CHECKSUM_UNNECESSARY;
-				skb_t->dev = skb->dev;
-								
-				skb_return = skb_t;
-				skb_t = NULL;
-
-				kfree_skb(skb);
-				skb = NULL;
-				
+				// Update len & data_len
+				skb_t = skb_rec;
+				do
+				{
+					skb_t->len += skb->len;
+					skb_t->data_len += skb->len;
+					shinfo = skb_shinfo(skb_t);
+					skb_t = shinfo->frag_list;
+				}
+				while(skb_t != skb);
+					
+				skb_return = skb_rec;
+				skb_rec = NULL;
+				skb_last = NULL;
 				break;
-			case 0:	// 00 : Middle frag
-			
-//				IAmHere = 5; 
 
+			// 00 : Middle frag
+			case 0:	
 				if(unlikely(datah->frag_sn != fragsn + 1))
 				{
-					printk(KERN_ERR"(Middle frag)ERROR : fragsn %d, Last fragsn %d\n",
-																		datah->frag_sn, fragsn);
+					printk(KERN_ERR"(Middle)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
 					break;
 				}
 				fragsn = datah->frag_sn;
 
 #ifdef SAFE
-				if(unlikely(skb_t == NULL)) 
+				if(unlikely(skb_rec == NULL)) 
 				{
-					printk(KERN_ERR"(Middle frag)ERROR : Lacking in skb.\n");
+					printk(KERN_ERR"(Middle)ERROR : Lacking in skb.\n");
 					break;
 				}
 #endif
+				// Add frag_list
+				shinfo = skb_shinfo(skb_last);
+				shinfo->frag_list = skb;
 
-				datalen = skb->len - sizeof(struct data_hdr);
-#ifdef SAFE
-				if(unlikely(datalen < 0)) 
+				// Update len & data_len
+				skb_t = skb_rec;
+				do
 				{
-					printk(KERN_ERR"(Middle frag)ERROR : Datalen < 0.\n");
-					break;
+					skb_t->len += skb->len;
+					skb_t->data_len += skb->len;
+					shinfo = skb_shinfo(skb_t);
+					skb_t = shinfo->frag_list;
 				}
-				if(unlikely(datalen > skb_headroom(skb_t))) 
-				{
-					printk(KERN_ERR"(Middle frag)ERROR : (sn %d)Datalen %d, headroom %d, alen %d.\n",
-												datah->pkt_sn, datalen, skb_headroom(skb_t), datah->len);
-					break;
-				}
-#endif
-				ptr = skb_push(skb_t, datalen);
-				memcpy(ptr, skb->data + sizeof(struct data_hdr), datalen);
-
-//				printk("skb_len : %d\n", skb_t->len);
-				
-				kfree_skb(skb);
-				skb = NULL;
+				while(skb_t != skb);
+					
+				skb_last = skb;
+				skb_return = NULL;
 
 				break;
+				
 			default:	break;
 		}
 	}
 	else
 	{
-//		IAmHere = 6; 
-		
 		printk(KERN_ERR"ERROR : sn error, Last sn:%d, this sn:%d\n", pktlastsn, datah->pkt_sn);
 		kfree_skb(skb);
 		skb = NULL;
+		skb_return = NULL;
 	}
 	
 	return skb_return;
@@ -323,7 +259,7 @@ unsigned int process_term_ctl(struct sk_buff *skb)	// Contorl Frame
 
 unsigned int TEST_PORT_FUNC(struct sk_buff *skb)
 {
-	Show_SkBuff_Data(skb, true, true, true, false);
+	Show_SkBuff_Data(skb, true, true, true, false, true);
 	kfree_skb(skb);
 	return NF_STOLEN;
 }
@@ -353,7 +289,7 @@ struct sk_buff * create_new_skb(unsigned int len)
 }
 
 
-void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool DAT)
+void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool DAT, bool SHINFO)
 {
 	unsigned int BuffData = 0;
 	char devname[IFNAMSIZ];
@@ -362,6 +298,7 @@ void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool D
 	struct udphdr * udph = NULL;
 	unsigned int IP_str[4];
 	unsigned char * content = NULL;
+	struct skb_shared_info * shinfo = NULL;
 
 	if(MAC)
 	{
@@ -494,11 +431,24 @@ void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool D
 		memcpy(content, (char *)udph + sizeof(struct udphdr), BuffData);
 		content[BuffData] = '\0';			// Print data
 
-		printk("Data: %s", content);
+		printk("Data: %s\n", content);
 
 		kfree(content);
 	}
 
+/**************************SHARED INFO**********************************************/
+	if(SHINFO)
+	{
+		shinfo = (struct skb_shared_info *)(skb->head + skb->end);
+		printk("+++++SHARED INFO+++++\n");
+		if(unlikely(!shinfo))
+		{	
+			printk("ERROR : shinfo is null.\n");
+		}
+		printk("nr_frags = %d \ntx_flags = %d \ngso_size = %d \ngso_segs = %d \ngso_type = %d \nfrag_list exist = %d\n",
+				shinfo->nr_frags, shinfo->tx_flags, shinfo->gso_size, shinfo->gso_segs,
+				shinfo->gso_type, (shinfo->frag_list != NULL));
+	}
 
 }
 

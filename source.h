@@ -73,8 +73,8 @@
 #define TRANS_BANDWIDTH_RES  0x24 		//传输带宽响应
 
 #define SAFE 1
-//#define LINUX_4_10					1
-#define LINUX_3_13					1
+#define LINUX_4_10					1
+//#define LINUX_3_13					1
 
 
 //extern struct dentry * my_debugfs_root;
@@ -227,7 +227,7 @@ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
 unsigned int TEST_PORT_FUNC(struct sk_buff *skb);
 void IP_int_to_str(uint32_t ip, unsigned int * addr);
 
-void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool DAT);
+void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool DAT, bool SHNIFO);
 
 
 void vehicle_hook_term_process(struct sk_buff *skb);
