@@ -1,0 +1,9 @@
+diff a/source.c b/source.c	(rejected hunks)
+@@ -5,6 +5,7 @@
+ #if defined LINUX_4_10
+ unsigned int preRoutHookDisp(		void *priv, 
+ 									struct sk_buff *skb, 
++									const struct nf_hook_state *state)
+ #elif defined LINUX_3_13
+ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
+ 							       	struct sk_buff *skb,

@@ -143,7 +143,7 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 
 			// 10 : First frag
 			case 2:	
-				if(unlikely(datah->frag_sn != 1))
+				if(unlikely(datah->frag_sn != 0))
 				{
 					printk(KERN_ERR"(Firs)ERROR : fragsn %d.", datah->frag_sn);
 					break;
