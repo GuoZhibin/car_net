@@ -16,7 +16,6 @@ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
 {
 	struct iphdr * iph = (struct iphdr *)(skb->head + skb->network_header);
 	struct udphdr *udph = (struct udphdr *)(skb->head + skb->transport_header);
-//	struct tcphdr *tcph = (struct tcphdr *)(skb->head + skb->transport_header);
 
 	if(iph->protocol == IPPROTO_UDP)	// Judge package type
 	{
@@ -26,11 +25,6 @@ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
 			vehicle_hook_term_process(skb);
 			return NF_STOLEN;
 			break;
-//		case 7006:
-//			printk("----------------Recap-----------------");
-//			Show_SkBuff_Data(skb, false, true, true, true, true);		
-//			return NF_ACCEPT;
-//			break;
 	/*		
 		case TERM_C2_VEHICLE_PORT:	// Terminal to car, command
 	
@@ -45,11 +39,6 @@ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
 		}
 
 	}
-//	else if(iphd->protocol == IPPROTO_TCP)
-//	{
-//		if(ntohs(tcph->dest) == 7006)
-//			Show_SkBuff_Data(skb, false, true, false, false);
-//	}
 	
 	return NF_ACCEPT;
 }
@@ -58,37 +47,19 @@ void vehicle_hook_term_process(struct sk_buff *skb)	// Deal packages from termin
 {
 	struct sk_buff *skb_decap = NULL;
 	
-//	printk("----------------Receive-----------------");
-//	Show_SkBuff_Data(skb, true, true, true, false, true);
-	
 	if(vehicle_udp_decap(skb))	// LLC Ctrl
 	{
-//		printk("***************Ctrl Frame***************\n");
 		process_term_ctl(skb);
 	}
 	else	// LLC Data
 	{
-//		if(skb_t) 
-//		{
-//			printk("Old skb dropped.\n");
-//			kfree_skb(skb_t);
-//		}
-
-//		printk("***************Data Frame***************\n");
-
-//		IAmHere = 1;
-
-		skb_decap = vehicle_llc_decap(skb);	
+//		skb_decap = vehicle_llc_decap_zerocpoy(skb);
+		skb_decap = vehicle_llc_decap_datacopy(skb); 
 
 		if(skb_decap) 
 		{	
-//			printk("***************Package***************\n");
-//			Show_SkBuff_Data(skb_decap, false, true, true, true, true);
-
 			netif_receive_skb(skb_decap);
-			
-//			kfree_skb(skb_decap);
-//			skb_decap = NULL;
+			skb_decap = NULL;
 		}
 	}
 }
@@ -101,21 +72,153 @@ int vehicle_udp_decap(struct sk_buff *skb)	// Decapsulate IP&UDP head.
 	skb_pull(skb, sizeof(struct udphdr));
 
 	tmp = (struct ctr_hdr *)skb->data;
-	if(tmp->d_or_c)	// LLC Ctrl
-	{
+	if(tmp->d_or_c)	
+	{// LLC Ctrl
 		return 1;
 	}
-	else	// LLC Data
-	{
+	else	
+	{// LLC Data
 		return 0;
 	}
 }
+
+struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)	
+{
+	struct data_hdr * datah = (struct data_hdr *)skb->data;
+	static struct sk_buff * skb_rec = NULL;
+	struct sk_buff * skb_return = NULL;
+	static int pktlastsn = -1;
+	static int fragsn = 0;
+	char * ptr = NULL;
+
+	const unsigned int headlen = sizeof(struct ethhdr) + sizeof(struct iphdr) + \
+							sizeof(struct udphdr) + sizeof(struct data_hdr) + 16;	
+
+	skb_pull(skb, sizeof(struct data_hdr));	
+	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	skb->protocol = htons(ETH_P_IP);
+	skb->network_header = skb->data - skb->head;
+	skb->transport_header = skb->network_header + sizeof(struct iphdr);
+
+	if((pktlastsn < 0) || (datah->pkt_sn == pktlastsn + 1) || 
+		(pktlastsn == 4095 && datah->pkt_sn == 1) || (datah->pkt_sn == 0))
+	{
+		pktlastsn = datah->pkt_sn;
+
+		switch(datah->frag_flag)
+		{
+			// 11 : No frag
+			case 3: 
+				skb_return = skb;
+			break;
+
+			// 10 : First frag
+			case 2: 
+				if(unlikely(datah->frag_sn != 0))
+				{
+					printk(KERN_ERR"(First frag)ERROR : fragsn %d.", datah->frag_sn);
+					break;
+				}
+				fragsn = datah->frag_sn;
+#ifdef SAFE				
+				if(unlikely(skb_rec != NULL)) 
+				{
+					printk(KERN_ERR"(First frag)ERROR : (sn%d)Recovery new pkg when old recoverying work unfinished.\n", 
+																								datah->pkt_sn);
+					kfree_skb(skb_rec);
+					skb_rec = NULL;
+				}
+#endif
+				skb_rec = skb_copy_expand(skb, headlen, datah->len - skb->len + 16, GFP_ATOMIC);
+#ifdef SAFE
+				if(unlikely(skb_rec == NULL))
+				{
+					printk(KERN_ERR"(First frag)ERROR : skb_t created failed.\n");
+					break;
+				}
+#endif
+
+				skb_return = NULL;
+
+				kfree_skb(skb);
+				skb = NULL;
+				
+				break;
+
+			// 01 : Last frag
+			case 1: 
+				if(unlikely(datah->frag_sn != fragsn + 1))
+				{
+					printk(KERN_ERR"(Last frag)ERROR : fragsn %d, Last fragsn %d\n",
+																		datah->frag_sn, fragsn);
+					break;
+				}
+				fragsn = datah->frag_sn;
+	
+#ifdef SAFE				
+				if(unlikely(skb_rec == NULL)) 
+				{
+					printk(KERN_ERR"(Last frag)ERROR : Lacking in skb.\n");
+					break;
+				}
+#endif				
+				
+				ptr = skb_put(skb_rec, skb->len);
+				memcpy(ptr, skb->data, skb->len);
+											
+				skb_return = skb_rec;
+				skb_rec = NULL;
+
+				kfree_skb(skb);
+				skb = NULL;
+				
+				break;
+			case 0: // 00 : Middle frag
+				if(unlikely(datah->frag_sn != fragsn + 1))
+				{
+					printk(KERN_ERR"(Middle frag)ERROR : fragsn %d, Last fragsn %d\n",
+																		datah->frag_sn, fragsn);
+					break;
+				}
+				fragsn = datah->frag_sn;
+
+#ifdef SAFE
+				if(unlikely(skb_rec == NULL)) 
+				{
+					printk(KERN_ERR"(Middle frag)ERROR : Lacking in skb.\n");
+					break;
+				}
+#endif
+
+				ptr = skb_put(skb_rec, skb->len);
+				memcpy(ptr, skb->data, skb->len);
+
+				skb_return = NULL;
+
+				kfree_skb(skb);
+				skb = NULL;
+
+				break;
+			default:	break;
+		}
+	}
+	else
+	{
+		printk(KERN_ERR"ERROR : sn error, Last sn:%d, this sn:%d\n", pktlastsn, datah->pkt_sn);
+		kfree_skb(skb);
+		skb = NULL;
+	}
+	
+	return skb_return;
+
+}
+
 
 /*
  * Decapsulate LLC head
  * This function free the skb!! Don't free again outside!!
  */
-struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)	
+struct sk_buff * vehicle_llc_decap_zerocpoy(struct sk_buff *skb)	
 {
 	struct data_hdr * datah = (struct data_hdr *)skb->data;
 	
@@ -145,8 +248,6 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 			// 11 : No frag
 			case 3:	
 				skb_return = skb;
-				skb_rec = NULL;
-				skb_last = NULL;
 			break;
 
 			// 10 : First frag

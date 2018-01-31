@@ -232,7 +232,9 @@ void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool D
 
 void vehicle_hook_term_process(struct sk_buff *skb);
 int vehicle_udp_decap(struct sk_buff *skb);	// Decapsulate IP&UDP head.
-struct sk_buff * vehicle_llc_decap(struct sk_buff *skb);
+struct sk_buff * vehicle_llc_decap_zerocpoy(struct sk_buff *skb);
+struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb);
+
 unsigned int process_term_ctl(struct sk_buff *skb);
 
 struct sk_buff * create_new_skb(unsigned int len);
