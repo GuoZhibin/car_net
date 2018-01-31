@@ -14,11 +14,11 @@ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
 							       	int (*okfn)(struct sk_buff *))
 #endif
 {
-	struct iphdr * iphd = (struct iphdr *)(skb->head + skb->network_header);
+	struct iphdr * iph = (struct iphdr *)(skb->head + skb->network_header);
 	struct udphdr *udph = (struct udphdr *)(skb->head + skb->transport_header);
 //	struct tcphdr *tcph = (struct tcphdr *)(skb->head + skb->transport_header);
 
-	if(iphd->protocol == IPPROTO_UDP)	// Judge package type
+	if(iph->protocol == IPPROTO_UDP)	// Judge package type
 	{
 		switch(ntohs(udph->dest))	// Judge destination port
 		{
@@ -26,6 +26,11 @@ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
 			vehicle_hook_term_process(skb);
 			return NF_STOLEN;
 			break;
+//		case 7006:
+//			printk("----------------Recap-----------------");
+//			Show_SkBuff_Data(skb, false, true, true, true, true);		
+//			return NF_ACCEPT;
+//			break;
 	/*		
 		case TERM_C2_VEHICLE_PORT:	// Terminal to car, command
 	
@@ -116,14 +121,17 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 	
 	static struct sk_buff * skb_rec = NULL;
 	static struct sk_buff * skb_last = NULL;
-	struct sk_buff * skb_t = NULL;
 	struct sk_buff * skb_return = NULL;
 	static int pktlastsn = -1;
 	static int fragsn = 0;
 	struct skb_shared_info * shinfo = NULL;
+	struct iphdr * iph = NULL;
 
 	skb_pull(skb, sizeof(struct data_hdr));
+	
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
+//	skb->ip_summed = CHECKSUM_NONE;
+	skb->protocol = htons(ETH_P_IP);
 	skb->network_header = skb->data - skb->head;
 	skb->transport_header = skb->network_header + sizeof(struct iphdr);
 
@@ -155,10 +163,17 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 					kfree_skb(skb_rec);
 					skb_rec = NULL;
 				}
-#endif
+#endif				
 				skb_rec = skb;
 				skb_last = skb;
 				fragsn = datah->frag_sn;
+
+				skb_rec->next = NULL;
+
+				iph = ip_hdr(skb_rec);
+				iph->check = 0;
+				iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
+				
 				skb_return = NULL;
 				break;
 
@@ -176,21 +191,21 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 					break;
 				}
 #endif				
-				// Add frag_list
-				shinfo = skb_shinfo(skb_last);
-				shinfo->frag_list = skb;
-
-				// Update len & data_len
-				skb_t = skb_rec;
-				do
+				// Add fragment
+				if(skb_last == skb_rec)
 				{
-					skb_t->len += skb->len;
-					skb_t->data_len += skb->len;
-					shinfo = skb_shinfo(skb_t);
-					skb_t = shinfo->frag_list;
+					shinfo = skb_shinfo(skb_last);
+					shinfo->frag_list = skb;
 				}
-				while(skb_t != skb);
-					
+				else
+				{
+					skb_last->next = skb;
+					skb->next = NULL;
+				}
+				skb_rec->len += skb->len;
+				skb_rec->data_len += skb->len;
+				skb_rec->truesize += skb->truesize;
+				
 				skb_return = skb_rec;
 				skb_rec = NULL;
 				skb_last = NULL;
@@ -212,21 +227,22 @@ struct sk_buff * vehicle_llc_decap(struct sk_buff *skb)
 					break;
 				}
 #endif
-				// Add frag_list
-				shinfo = skb_shinfo(skb_last);
-				shinfo->frag_list = skb;
-
-				// Update len & data_len
-				skb_t = skb_rec;
-				do
+				// Add fragment
+				if(skb_last == skb_rec)
 				{
-					skb_t->len += skb->len;
-					skb_t->data_len += skb->len;
-					shinfo = skb_shinfo(skb_t);
-					skb_t = shinfo->frag_list;
+					shinfo = skb_shinfo(skb_last);
+					shinfo->frag_list = skb;
+					skb->next = NULL;
 				}
-				while(skb_t != skb);
-					
+				else
+				{
+					skb_last->next = skb;
+					skb->next = NULL;
+				}
+				skb_rec->len += skb->len;
+				skb_rec->data_len += skb->len;
+				skb_rec->truesize += skb->truesize;
+				
 				skb_last = skb;
 				skb_return = NULL;
 
@@ -439,7 +455,7 @@ void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool D
 /**************************SHARED INFO**********************************************/
 	if(SHINFO)
 	{
-		shinfo = (struct skb_shared_info *)(skb->head + skb->end);
+		shinfo = skb_shinfo(skb);
 		printk("+++++SHARED INFO+++++\n");
 		if(unlikely(!shinfo))
 		{	
