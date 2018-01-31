@@ -87,7 +87,6 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 	struct data_hdr * datah = (struct data_hdr *)skb->data;
 	static struct sk_buff * skb_rec = NULL;
 	struct sk_buff * skb_return = NULL;
-	static int pktlastsn = -1;
 	static int fragsn = 0;
 	char * ptr = NULL;
 
@@ -100,117 +99,102 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 	skb->network_header = skb->data - skb->head;
 	skb->transport_header = skb->network_header + sizeof(struct iphdr);
 
-	if((pktlastsn < 0) || (datah->pkt_sn == pktlastsn + 1) || 
-		(pktlastsn == 4095 && datah->pkt_sn == 1) || (datah->pkt_sn == 0))
+	switch(datah->frag_flag)
 	{
-		pktlastsn = datah->pkt_sn;
+		// 11 : No frag
+		case 3: 
+			skb_return = skb;
+		break;
 
-		switch(datah->frag_flag)
-		{
-			// 11 : No frag
-			case 3: 
-				skb_return = skb;
+		// 10 : First frag
+		case 2: 
+			if(unlikely(skb_rec != NULL)) 
+			{
+				printk(KERN_ERR"(First)ERROR : (sn%d)Last skb unfinished.\n", datah->pkt_sn);
+				kfree_skb(skb_rec);
+				skb_rec = NULL;
+			}
+			if(unlikely(datah->frag_sn != 0))
+			{
+				printk(KERN_ERR"(First)ERROR : fragsn %d.", datah->frag_sn);
+				kfree_skb(skb);
+				break;
+			}
+			fragsn = datah->frag_sn;
+
+			skb_rec = skb_copy_expand(skb, headlen, datah->len - skb->len + 16, GFP_ATOMIC);
+
+			if(unlikely(skb_rec == NULL))
+			{
+				printk(KERN_ERR"(First)ERROR : skb_t created failed.\n");
+				break;
+			}
+
+			skb_return = NULL;
+
+			kfree_skb(skb);
+			skb = NULL;
+			
 			break;
 
-			// 10 : First frag
-			case 2: 
-				if(unlikely(datah->frag_sn != 0))
-				{
-					printk(KERN_ERR"(First frag)ERROR : fragsn %d.", datah->frag_sn);
-					break;
-				}
-				fragsn = datah->frag_sn;
-#ifdef SAFE				
-				if(unlikely(skb_rec != NULL)) 
-				{
-					printk(KERN_ERR"(First frag)ERROR : (sn%d)Recovery new pkg when old recoverying work unfinished.\n", 
-																								datah->pkt_sn);
-					kfree_skb(skb_rec);
-					skb_rec = NULL;
-				}
-#endif
-				skb_rec = skb_copy_expand(skb, headlen, datah->len - skb->len + 16, GFP_ATOMIC);
-#ifdef SAFE
-				if(unlikely(skb_rec == NULL))
-				{
-					printk(KERN_ERR"(First frag)ERROR : skb_t created failed.\n");
-					break;
-				}
-#endif
-
-				skb_return = NULL;
-
+		// 01 : Last frag
+		case 1: 
+			if(unlikely(skb_rec == NULL)) 
+			{
+				printk(KERN_ERR"(Last)ERROR : Lacking in skb.\n");
 				kfree_skb(skb);
-				skb = NULL;
-				
 				break;
-
-			// 01 : Last frag
-			case 1: 
-				if(unlikely(datah->frag_sn != fragsn + 1))
-				{
-					printk(KERN_ERR"(Last frag)ERROR : fragsn %d, Last fragsn %d\n",
-																		datah->frag_sn, fragsn);
-					break;
-				}
-				fragsn = datah->frag_sn;
-	
-#ifdef SAFE				
-				if(unlikely(skb_rec == NULL)) 
-				{
-					printk(KERN_ERR"(Last frag)ERROR : Lacking in skb.\n");
-					break;
-				}
-#endif				
-				
-				ptr = skb_put(skb_rec, skb->len);
-				memcpy(ptr, skb->data, skb->len);
-											
-				skb_return = skb_rec;
+			}	
+			if(unlikely(datah->frag_sn != fragsn + 1))
+			{
+				printk(KERN_ERR"(Last)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
+				kfree_skb(skb_rec);
 				skb_rec = NULL;
-
 				kfree_skb(skb);
-				skb = NULL;
-				
 				break;
-			case 0: // 00 : Middle frag
-				if(unlikely(datah->frag_sn != fragsn + 1))
-				{
-					printk(KERN_ERR"(Middle frag)ERROR : fragsn %d, Last fragsn %d\n",
-																		datah->frag_sn, fragsn);
-					break;
-				}
-				fragsn = datah->frag_sn;
+			}
+			
+			ptr = skb_put(skb_rec, skb->len);
+			memcpy(ptr, skb->data, skb->len);
+										
+			skb_return = skb_rec;
+			skb_rec = NULL;
 
-#ifdef SAFE
-				if(unlikely(skb_rec == NULL)) 
-				{
-					printk(KERN_ERR"(Middle frag)ERROR : Lacking in skb.\n");
-					break;
-				}
-#endif
-
-				ptr = skb_put(skb_rec, skb->len);
-				memcpy(ptr, skb->data, skb->len);
-
-				skb_return = NULL;
-
+			kfree_skb(skb);
+			skb = NULL;
+			
+			break;
+		case 0: // 00 : Middle frag
+			if(unlikely(skb_rec == NULL)) 
+			{
+				printk(KERN_ERR"(Middle)ERROR : Lacking in skb.\n");
 				kfree_skb(skb);
-				skb = NULL;
-
 				break;
-			default:	break;
-		}
-	}
-	else
-	{
-		printk(KERN_ERR"ERROR : sn error, Last sn:%d, this sn:%d\n", pktlastsn, datah->pkt_sn);
-		kfree_skb(skb);
-		skb = NULL;
-	}
+			}	
+			if(unlikely(datah->frag_sn != fragsn + 1))
+			{
+				printk(KERN_ERR"(Middle)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
+				kfree_skb(skb_rec);
+				skb_rec = NULL;
+				kfree_skb(skb);
+				break;
+			}
+			
+			fragsn = datah->frag_sn;
+
+			ptr = skb_put(skb_rec, skb->len);
+			memcpy(ptr, skb->data, skb->len);
+
+			skb_return = NULL;
+
+			kfree_skb(skb);
+			skb = NULL;
+
+			break;
+		default:	break;
+	}	
 	
 	return skb_return;
-
 }
 
 
@@ -225,7 +209,6 @@ struct sk_buff * vehicle_llc_decap_zerocpoy(struct sk_buff *skb)
 	static struct sk_buff * skb_rec = NULL;
 	static struct sk_buff * skb_last = NULL;
 	struct sk_buff * skb_return = NULL;
-	static int pktlastsn = -1;
 	static int fragsn = 0;
 	struct skb_shared_info * shinfo = NULL;
 	struct iphdr * iph = NULL;
@@ -238,126 +221,118 @@ struct sk_buff * vehicle_llc_decap_zerocpoy(struct sk_buff *skb)
 	skb->network_header = skb->data - skb->head;
 	skb->transport_header = skb->network_header + sizeof(struct iphdr);
 
-	if((pktlastsn < 0) || (datah->pkt_sn == pktlastsn + 1) || 
-		(pktlastsn == 4095 && datah->pkt_sn == 1) || (datah->pkt_sn == 0))
+	switch(datah->frag_flag)
 	{
-		pktlastsn = datah->pkt_sn;
+		// 11 : No frag
+		case 3:	
+			skb_return = skb;
+		break;
 
-		switch(datah->frag_flag)
-		{
-			// 11 : No frag
-			case 3:	
-				skb_return = skb;
+		// 10 : First frag
+		case 2:	
+			if(unlikely(skb_rec != NULL)) 
+			{
+				printk(KERN_ERR"(First)ERROR : (sn%d)Last skb unfinished.\n", datah->pkt_sn);
+				kfree_skb(skb_rec);
+				skb_rec = NULL;
+			}
+			if(unlikely(datah->frag_sn != 0))
+			{
+				printk(KERN_ERR"(First)ERROR : fragsn %d.", datah->frag_sn);
+				kfree_skb(skb);
+				break;
+			}		
+			fragsn = datah->frag_sn;
+			
+			skb_rec = skb;
+			skb_last = skb;
+
+			skb_rec->next = NULL;
+
+			iph = ip_hdr(skb_rec);
+			iph->check = 0;
+			iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
+			
+			skb_return = NULL;
 			break;
 
-			// 10 : First frag
-			case 2:	
-				if(unlikely(datah->frag_sn != 0))
-				{
-					printk(KERN_ERR"(Firs)ERROR : fragsn %d.", datah->frag_sn);
-					break;
-				}
-#ifdef SAFE				
-				if(unlikely(skb_rec != NULL)) 
-				{
-					printk(KERN_ERR"(First)ERROR : (sn%d)Last skb unfinished.\n", datah->pkt_sn);
-					kfree_skb(skb_rec);
-					skb_rec = NULL;
-				}
-#endif				
-				skb_rec = skb;
-				skb_last = skb;
-				fragsn = datah->frag_sn;
-
-				skb_rec->next = NULL;
-
-				iph = ip_hdr(skb_rec);
-				iph->check = 0;
-				iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
-				
-				skb_return = NULL;
+		// 01 : Last frag
+		case 1:	
+			if(unlikely(skb_rec == NULL)) 
+			{
+				printk(KERN_ERR"(Last)ERROR : Lacking in skb.\n");
+				kfree_skb(skb);
 				break;
-
-			// 01 : Last frag
-			case 1:	
-				if(unlikely(datah->frag_sn != fragsn + 1))
-				{
- 					printk(KERN_ERR"(Last)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
-					break;
-				}								
-#ifdef SAFE				
-				if(unlikely(skb_rec == NULL)) 
-				{
-					printk(KERN_ERR"(Last)ERROR : Lacking in skb.\n");
-					break;
-				}
-#endif				
-				// Add fragment
-				if(skb_last == skb_rec)
-				{
-					shinfo = skb_shinfo(skb_last);
-					shinfo->frag_list = skb;
-				}
-				else
-				{
-					skb_last->next = skb;
-					skb->next = NULL;
-				}
-				skb_rec->len += skb->len;
-				skb_rec->data_len += skb->len;
-				skb_rec->truesize += skb->truesize;
-				
-				skb_return = skb_rec;
+			}	
+			if(unlikely(datah->frag_sn != fragsn + 1))
+			{
+				printk(KERN_ERR"(Last)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
+				kfree_skb(skb_rec);
 				skb_rec = NULL;
-				skb_last = NULL;
+				kfree_skb(skb);
 				break;
+			}
+			
+			// Add fragment
+			if(skb_last == skb_rec)
+			{
+				shinfo = skb_shinfo(skb_last);
+				shinfo->frag_list = skb;
+			}
+			else
+			{
+				skb_last->next = skb;
+				skb->next = NULL;
+			}
+			skb_rec->len += skb->len;
+			skb_rec->data_len += skb->len;
+			skb_rec->truesize += skb->truesize;
+			
+			skb_return = skb_rec;
+			skb_rec = NULL;
+			skb_last = NULL;
+			break;
 
-			// 00 : Middle frag
-			case 0:	
-				if(unlikely(datah->frag_sn != fragsn + 1))
-				{
-					printk(KERN_ERR"(Middle)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
-					break;
-				}
-				fragsn = datah->frag_sn;
-
-#ifdef SAFE
-				if(unlikely(skb_rec == NULL)) 
-				{
-					printk(KERN_ERR"(Middle)ERROR : Lacking in skb.\n");
-					break;
-				}
-#endif
-				// Add fragment
-				if(skb_last == skb_rec)
-				{
-					shinfo = skb_shinfo(skb_last);
-					shinfo->frag_list = skb;
-					skb->next = NULL;
-				}
-				else
-				{
-					skb_last->next = skb;
-					skb->next = NULL;
-				}
-				skb_rec->len += skb->len;
-				skb_rec->data_len += skb->len;
-				skb_rec->truesize += skb->truesize;
-				
-				skb_last = skb;
-				skb_return = NULL;
-
+		// 00 : Middle frag
+		case 0:	
+			if(unlikely(skb_rec == NULL)) 
+			{
+				printk(KERN_ERR"(Middle)ERROR : Lacking in skb.\n");
+				kfree_skb(skb);
 				break;
-				
-			default:	break;
-		}
-	}
-	else
-	{
-		printk(KERN_ERR"ERROR : sn error, Last sn:%d, this sn:%d\n", pktlastsn, datah->pkt_sn);
-		kfree_skb(skb);
-		skb = NULL;
-		skb_return = NULL;
+			}	
+			if(unlikely(datah->frag_sn != fragsn + 1))
+			{
+				printk(KERN_ERR"(Middle)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
+				kfree_skb(skb_rec);
+				skb_rec = NULL;
+				kfree_skb(skb);
+				break;
+			}
+			fragsn = datah->frag_sn;
+
+			// Add fragment
+			if(skb_last == skb_rec)
+			{
+				shinfo = skb_shinfo(skb_last);
+				shinfo->frag_list = skb;
+				skb->next = NULL;
+			}
+			else
+			{
+				skb_last->next = skb;
+				skb->next = NULL;
+			}
+			skb_rec->len += skb->len;
+			skb_rec->data_len += skb->len;
+			skb_rec->truesize += skb->truesize;
+			
+			skb_last = skb;
+			skb_return = NULL;
+
+			break;
+			
+		default:	break;
 	}
 	
 	return skb_return;
