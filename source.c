@@ -58,6 +58,7 @@ void vehicle_hook_term_process(struct sk_buff *skb)	// Deal packages from termin
 
 		if(skb_decap) 
 		{	
+//			Show_SkBuff_Data(skb_decap, true, true, false, false, true);	
 			netif_receive_skb(skb_decap);
 			skb_decap = NULL;
 		}
@@ -104,7 +105,28 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 		// 11 : No frag
 		case 3: 
 			skb_return = skb;
-		break;
+//			skb_rec = alloc_skb(datah->len + headlen + 16, GFP_ATOMIC);
+//			if(unlikely(!skb_rec))
+//			{
+//				printk("alloc_skb failed\n");
+//				kfree_skb(skb);
+//				break;
+//			}
+//			skb_rec->dev = skb->dev;
+//			skb_rec->pkt_type = skb->pkt_type;
+//			skb_reset_mac_header(skb_rec);
+//			skb_rec->network_header = skb_rec->mac_header + sizeof(struct ethhdr);
+//			skb_rec->transport_header = skb_rec->network_header + sizeof(struct iphdr);
+//			memcpy(skb_put(skb_rec, sizeof(struct ethhdr)), eth_hdr(skb), sizeof(struct ethhdr));
+//			skb->len -= sizeof(struct ethhdr);
+//			memcpy(skb_put(skb_rec, skb->len), ip_hdr(skb), skb->len);
+//			skb_rec->data = skb_network_header(skb_rec);
+//
+//			skb_return = skb_rec;
+//			skb_rec = NULL;
+//			kfree_skb(skb);
+
+			break;
 
 		// 10 : First frag
 		case 2: 
@@ -123,13 +145,29 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 			fragsn = datah->frag_sn;
 
 			skb_rec = skb_copy_expand(skb, headlen, datah->len - skb->len + 16, GFP_ATOMIC);
-
 			if(unlikely(skb_rec == NULL))
 			{
 				printk(KERN_ERR"(First)ERROR : skb_t created failed.\n");
 				break;
 			}
 
+//			skb_rec = alloc_skb(datah->len + headlen + 16, GFP_ATOMIC);
+//			if(unlikely(!skb_rec))
+//			{
+//				printk("alloc_skb failed\n");
+//				kfree_skb(skb);
+//				break;
+//			}
+//			skb_rec->dev = skb->dev;
+//			skb_rec->pkt_type = skb->pkt_type;
+//			skb_reset_mac_header(skb_rec);
+//			skb_rec->network_header = skb_rec->mac_header + sizeof(struct ethhdr);
+//			skb_rec->transport_header = skb_rec->network_header + sizeof(struct iphdr);
+//			memcpy(skb_put(skb_rec, sizeof(struct ethhdr)), eth_hdr(skb), sizeof(struct ethhdr));
+//			skb->len -= sizeof(struct ethhdr);
+//			memcpy(skb_put(skb_rec, skb->len), ip_hdr(skb), skb->len);
+//			skb_rec->data = skb_network_header(skb_rec);
+			
 			skb_return = NULL;
 
 			kfree_skb(skb);
@@ -365,22 +403,6 @@ void IP_int_to_str(uint32_t ip, unsigned int * addr)
 	addr[3] = (unsigned int)(ip & 0x000000FF);	
 }
 
-struct sk_buff * create_new_skb(unsigned int len)
-{
-	struct sk_buff *skb = alloc_skb(len, GFP_KERNEL);
-#ifdef SAFE	
-	if(unlikely(!skb)) 
-	{
-		printk("alloc failed\n"); 
-		return NULL;
-	} 
-#endif
-	skb_reserve(skb, len);
-	skb->pkt_type  = PACKET_OTHERHOST;
-	return skb;
-}
-
-
 void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool DAT, bool SHINFO)
 {
 	unsigned int BuffData = 0;
@@ -411,7 +433,7 @@ void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool D
 			printk("Dev name : %s\n", devname); 	
 		}
 
-		content = (unsigned char *)kmalloc(sizeof(unsigned char) * ETH_ALEN + 1, GFP_KERNEL);
+		content = (unsigned char *)kmalloc(sizeof(unsigned char) * ETH_ALEN + 1, GFP_ATOMIC);
 		if(unlikely(!content))
 		{
 			printk("ERROR : kmalloc Failed.\n");
@@ -468,6 +490,9 @@ void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool D
 		{
 			printk("IP LEN : %d\n", BuffData);
 		}
+
+		BuffData = iph->protocol;
+		printk("IP protocol : %d\n", BuffData);
 	}
 
 	if(TSP)
