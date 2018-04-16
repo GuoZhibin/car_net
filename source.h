@@ -32,6 +32,10 @@
 #include <linux/seq_file.h>
 
 
+#include <net/dst.h>
+#include <net/xfrm.h>
+
+//#include <linux/tracepoint.h>
 
 #define UDP_CLI_PORT 4047
 #define UDP_SERV_PORT 7003
@@ -72,9 +76,9 @@
 #define TRANS_BANDWIDTH_REQ = 0x14		//传输带宽请求
 #define TRANS_BANDWIDTH_RES  0x24 		//传输带宽响应
 
-#define SAFE 1
-#define LINUX_4_10					1
-//#define LINUX_3_13					1
+#define SAFE 
+#define LINUX_4_10					
+//#define LINUX_3_13					
 
 
 //extern struct dentry * my_debugfs_root;
@@ -83,7 +87,11 @@
 //extern struct dentry * my_debugfs_file = NULL;
 //extern static const struct file_operations car_net_fops;
 
-extern u32 IAmHere;
+//DECLARE_TRACE(netif_receive_skb, TP_PROTO(struct sk_buff *skb), TP_ARGS(skb));
+//DEFINE_TRACE_FN(netif_receive_skb, TP_PROTO(struct sk_buff *skb), TP_ARGS(skb));
+
+
+//extern u32 IAmHere;
 
 
 //移动应急车状态

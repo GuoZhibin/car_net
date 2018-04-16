@@ -25,6 +25,10 @@ unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
 			vehicle_hook_term_process(skb);
 			return NF_STOLEN;
 			break;
+		case 7006:
+//			Show_SkBuff_Data(skb, true, true, true, true, true);
+			return NF_ACCEPT;
+			break;
 	/*		
 		case TERM_C2_VEHICLE_PORT:	// Terminal to car, command
 	
@@ -57,9 +61,11 @@ void vehicle_hook_term_process(struct sk_buff *skb)	// Deal packages from termin
 		skb_decap = vehicle_llc_decap_datacopy(skb); 
 
 		if(skb_decap) 
-		{	
-//			Show_SkBuff_Data(skb_decap, true, true, false, false, true);	
+		{
+//			Show_SkBuff_Data(skb_decap, true, true, true, true, true);
+
 			netif_receive_skb(skb_decap);
+			
 			skb_decap = NULL;
 		}
 	}
@@ -83,6 +89,34 @@ int vehicle_udp_decap(struct sk_buff *skb)	// Decapsulate IP&UDP head.
 	}
 }
 
+struct sk_buff * copy_new_skb(struct sk_buff *skb, int len)
+{
+	struct sk_buff * nskb = NULL;
+	
+	nskb = alloc_skb(skb->len + 18 + len, GFP_ATOMIC);
+	if(unlikely(nskb == NULL)) 
+	{
+		printk(KERN_ERR"nskb allc failed\n");
+		return NULL;
+	}
+	skb_reserve(nskb, 2);
+	skb_put(nskb, skb->len + ETH_HLEN);
+	skb_reset_mac_header(nskb);
+	skb_set_network_header(nskb, ETH_HLEN);
+	skb_set_transport_header(nskb, ETH_HLEN + sizeof(struct iphdr));
+	memcpy(skb_mac_header(nskb), skb_mac_header(skb), ETH_HLEN);
+	memcpy(skb_network_header(nskb), skb_network_header(skb), skb_headlen(skb));
+	skb_pull(nskb, ETH_HLEN);
+	nskb->dev = skb->dev;
+	nskb->pkt_type = skb->pkt_type;
+	nskb->protocol = skb->protocol;
+	nskb->ip_summed = CHECKSUM_NONE;
+	nskb->tstamp = skb->tstamp;
+	
+	return nskb;
+}
+
+
 struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)	
 {
 	struct data_hdr * datah = (struct data_hdr *)skb->data;
@@ -97,39 +131,45 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 	skb_pull(skb, sizeof(struct data_hdr));	
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
 	skb->protocol = htons(ETH_P_IP);
-	skb->network_header = skb->data - skb->head;
-	skb->transport_header = skb->network_header + sizeof(struct iphdr);
+	skb_reset_network_header(skb);
+	skb_set_transport_header(skb, sizeof(struct iphdr));
 
+//	printk("%d\n", datah->pkt_sn);
+	
 	switch(datah->frag_flag)
 	{
 		// 11 : No frag
 		case 3: 
 			skb_return = skb;
-//			skb_rec = alloc_skb(datah->len + headlen + 16, GFP_ATOMIC);
-//			if(unlikely(!skb_rec))
-//			{
-//				printk("alloc_skb failed\n");
-//				kfree_skb(skb);
-//				break;
-//			}
-//			skb_rec->dev = skb->dev;
-//			skb_rec->pkt_type = skb->pkt_type;
-//			skb_reset_mac_header(skb_rec);
-//			skb_rec->network_header = skb_rec->mac_header + sizeof(struct ethhdr);
-//			skb_rec->transport_header = skb_rec->network_header + sizeof(struct iphdr);
-//			memcpy(skb_put(skb_rec, sizeof(struct ethhdr)), eth_hdr(skb), sizeof(struct ethhdr));
-//			skb->len -= sizeof(struct ethhdr);
-//			memcpy(skb_put(skb_rec, skb->len), ip_hdr(skb), skb->len);
-//			skb_rec->data = skb_network_header(skb_rec);
-//
-//			skb_return = skb_rec;
-//			skb_rec = NULL;
+
+//			skb_return = copy_new_skb(skb, 0);
 //			kfree_skb(skb);
+
+//			skb_return = alloc_skb(skb->len + 18, GFP_ATOMIC);
+//			if(unlikely(skb_return == NULL)) 
+//			{
+//				printk(KERN_ERR"nskb allc failed\n");
+//				return NULL;
+//			}
+//			skb_reserve(skb_return, 2);
+//			skb_reset_mac_header(skb_return);
+//			skb_set_network_header(skb_return, ETH_HLEN);
+//			skb_set_transport_header(skb_return, ETH_HLEN + sizeof(struct iphdr));
+//			
+//			skb_put(skb_return, skb->len + ETH_HLEN);
+//			memcpy(skb_mac_header(skb_return), skb_mac_header(skb), ETH_HLEN);
+//			memcpy(skb_network_header(skb_return), skb_network_header(skb), skb_headlen(skb));
+//			skb_pull(skb_return, ETH_HLEN);
+//			skb_return->dev = skb->dev;
+//			skb_return->pkt_type = skb->pkt_type;
+//			skb_return->protocol = skb->protocol;
+//			skb_return->ip_summed = CHECKSUM_NONE;
+//			skb_return->tstamp = skb->tstamp;
 
 			break;
 
 		// 10 : First frag
-		case 2: 
+		case 2: 	
 			if(unlikely(skb_rec != NULL)) 
 			{
 				printk(KERN_ERR"(First)ERROR : (sn%d)Last skb unfinished.\n", datah->pkt_sn);
@@ -145,28 +185,12 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 			fragsn = datah->frag_sn;
 
 			skb_rec = skb_copy_expand(skb, headlen, datah->len - skb->len + 16, GFP_ATOMIC);
+//			skb_rec = copy_new_skb(skb, datah->len - skb->len);
 			if(unlikely(skb_rec == NULL))
 			{
-				printk(KERN_ERR"(First)ERROR : skb_t created failed.\n");
+				printk(KERN_ERR"(First)ERROR : skb_rec created failed.\n");
 				break;
 			}
-
-//			skb_rec = alloc_skb(datah->len + headlen + 16, GFP_ATOMIC);
-//			if(unlikely(!skb_rec))
-//			{
-//				printk("alloc_skb failed\n");
-//				kfree_skb(skb);
-//				break;
-//			}
-//			skb_rec->dev = skb->dev;
-//			skb_rec->pkt_type = skb->pkt_type;
-//			skb_reset_mac_header(skb_rec);
-//			skb_rec->network_header = skb_rec->mac_header + sizeof(struct ethhdr);
-//			skb_rec->transport_header = skb_rec->network_header + sizeof(struct iphdr);
-//			memcpy(skb_put(skb_rec, sizeof(struct ethhdr)), eth_hdr(skb), sizeof(struct ethhdr));
-//			skb->len -= sizeof(struct ethhdr);
-//			memcpy(skb_put(skb_rec, skb->len), ip_hdr(skb), skb->len);
-//			skb_rec->data = skb_network_header(skb_rec);
 			
 			skb_return = NULL;
 
@@ -176,16 +200,24 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 			break;
 
 		// 01 : Last frag
-		case 1: 
+		case 1: 		
 			if(unlikely(skb_rec == NULL)) 
 			{
 				printk(KERN_ERR"(Last)ERROR : Lacking in skb.\n");
 				kfree_skb(skb);
 				break;
-			}	
+			}
 			if(unlikely(datah->frag_sn != fragsn + 1))
 			{
 				printk(KERN_ERR"(Last)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
+				kfree_skb(skb_rec);
+				skb_rec = NULL;
+				kfree_skb(skb);
+				break;
+			}
+			if(unlikely(skb_tailroom(skb_rec) < skb->len))
+			{
+				printk("skb_tailroom = %d, skb->len = %d\n", skb_tailroom(skb_rec), skb->len);
 				kfree_skb(skb_rec);
 				skb_rec = NULL;
 				kfree_skb(skb);
@@ -200,7 +232,7 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 
 			kfree_skb(skb);
 			skb = NULL;
-			
+
 			break;
 		case 0: // 00 : Middle frag
 			if(unlikely(skb_rec == NULL)) 
@@ -212,6 +244,14 @@ struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb)
 			if(unlikely(datah->frag_sn != fragsn + 1))
 			{
 				printk(KERN_ERR"(Middle)ERROR : fragsn %d, Last fragsn %d\n", datah->frag_sn, fragsn);
+				kfree_skb(skb_rec);
+				skb_rec = NULL;
+				kfree_skb(skb);
+				break;
+			}
+			if(unlikely(skb_tailroom(skb_rec) < skb->len))
+			{
+				printk("(Middle)ERROR : tailroom not enough\n");
 				kfree_skb(skb_rec);
 				skb_rec = NULL;
 				kfree_skb(skb);
@@ -566,6 +606,7 @@ void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool D
 				shinfo->nr_frags, shinfo->tx_flags, shinfo->gso_size, shinfo->gso_segs,
 				shinfo->gso_type, (shinfo->frag_list != NULL));
 	}
+	printk("---------------------------------------------\n\n");
 
 }
 
