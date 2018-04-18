@@ -1,39 +1,14 @@
 #ifndef DIRVE_H
 #define DIRVE_H
 
-#include<linux/module.h>
-#include<linux/init.h>
-#include<linux/netdevice.h>
-#include<linux/errno.h>
-#include<linux/skbuff.h>
-#include<linux/etherdevice.h>
-#include<linux/kernel.h>
-#include<linux/types.h>//_be32
-#include<linux/string.h>
-#include<linux/inetdevice.h>
-#include<net/net_namespace.h>
-#include<linux/ip.h>
-#include<linux/tcp.h>
-#include<linux/udp.h>
-#include<linux/kthread.h>
-#include <linux/sched.h>
-#include <asm/processor.h>
-#include <linux/interrupt.h>
-
+#include <linux/module.h>
+#include <linux/skbuff.h>
+#include <linux/types.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
-
-
-#include <linux/slab.h>	
-						
 #include "mmDebug.h"
 
-#include <linux/debugfs.h>
-#include <linux/seq_file.h>
-
-
-#include <net/dst.h>
-#include <net/xfrm.h>
+#include "llc_decap/llc_decap.h"
 
 //#include <linux/tracepoint.h>
 
@@ -76,22 +51,7 @@
 #define TRANS_BANDWIDTH_REQ = 0x14		//传输带宽请求
 #define TRANS_BANDWIDTH_RES  0x24 		//传输带宽响应
 
-#define SAFE 
 #define LINUX_4_10					
-//#define LINUX_3_13					
-
-
-//extern struct dentry * my_debugfs_root;
-//extern struct dentry * my_debugfs;
-//extern struct debugfs_blob_wrapper arraydata;
-//extern struct dentry * my_debugfs_file = NULL;
-//extern static const struct file_operations car_net_fops;
-
-//DECLARE_TRACE(netif_receive_skb, TP_PROTO(struct sk_buff *skb), TP_ARGS(skb));
-//DEFINE_TRACE_FN(netif_receive_skb, TP_PROTO(struct sk_buff *skb), TP_ARGS(skb));
-
-
-//extern u32 IAmHere;
 
 
 //移动应急车状态
@@ -122,33 +82,7 @@ enum llc_traffic_id
 	DATA_UM1		// UM业务，时间敏感度高，业务质量要求一般
 };
 
-//控制帧帧头
-struct ctr_hdr
-{
-	u16 d_or_c:1,  //数据还是控制, 1表示控制
-		ctl_frame_t:4,//控制帧类型
-		res1:3,//保留
-		vehicle_id:8;//移动应急车ID
-	u16 len:8,//控制字段长度，不包括控制头部4字节长度
-		res2:8; //保留
-};
 
-//数据帧帧头
-struct data_hdr
-{
-	u16 d_or_c:1, //数据还是控制, 1表示控制
-		ack_flag:1,// 是否捎带ARQ ACK,如果捎带，则置1，ARQ ACK捎带在数据之后
-		frag_flag:2,//分片标志
-		llc_id:3,//业务流ID
-		res1:1,//保留
-		vehicle_id:8; //移动应急车ID
-	u16 frag_sn:8,//分片序号
-		re_frag_num:4,//再分割包数
-		re_frag_sn:4;//再分割序号
-	u32 pkt_sn:12,//数据包序号
-		len:14,//数据包长度，不包括包头struct data_hdr
-		res3:6; //保留
-};
 
 //与本地网卡对应远端网卡信息
 struct link_info
@@ -202,10 +136,6 @@ struct vehicle_info
 	u8 vehicle_id;  //移动应急车编号
 	u8 vehicle_status; //移动应急车状态
 
-//	struct um_entity[MAX_UM_NUM];// 对应分发汇聚服务器的UM业务	
-//	struct am_entity[MAX_AM_NUM];// 对应分发汇聚服务器的AM业务
-	// TODO:  Need to be fixed
-
 	struct adapter_info wan_apapter[MAX_WAN_ADAPTER];// 移动应急车WAN口网卡
 	struct link_info link_lan[MAX_WAN_ADAPTER];
 
@@ -220,34 +150,18 @@ struct vehicle_info
 	u32 dlpktsnd_cnt;//发送给分发汇聚服务器包计数
 };
 
-
-#if defined LINUX_4_10
 unsigned int preRoutHookDisp(		void *priv, 
 									struct sk_buff *skb, 
 									const struct nf_hook_state *state);
-#elif defined LINUX_3_13
-unsigned int preRoutHookDisp(		const struct nf_hook_ops *ops,
-							       	struct sk_buff *skb,
-							       	const struct net_device *in,
-							       	const struct net_device *out,
-							       	int (*okfn)(struct sk_buff *));
-#endif
-unsigned int TEST_PORT_FUNC(struct sk_buff *skb);
-void IP_int_to_str(uint32_t ip, unsigned int * addr);
 
-void Show_SkBuff_Data(struct sk_buff * skb, bool MAC, bool NET, bool TSP, bool DAT, bool SHNIFO);
 
 
 void vehicle_hook_term_process(struct sk_buff *skb);
-int vehicle_udp_decap(struct sk_buff *skb);	// Decapsulate IP&UDP head.
-struct sk_buff * vehicle_llc_decap_zerocpoy(struct sk_buff *skb);
-struct sk_buff * vehicle_llc_decap_datacopy(struct sk_buff *skb);
 
 unsigned int process_term_ctl(struct sk_buff *skb);
 
 struct sk_buff * create_new_skb(unsigned int len);
 
-ssize_t WriteToFile(const char * FileName, unsigned char * DataToWrite, unsigned int DataLen);
 
 
 
